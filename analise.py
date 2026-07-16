@@ -505,7 +505,7 @@ def analisar_extremos(ts_s, valores, modo="filtrado", prominencia=2.0, distancia
                        estagnacao_tolerancia=1.0, estagnacao_duracao_min=0.30,
                        estagnacao_diferenca_minima=3.0, estagnacao_intervalo_fusao=0.30,
                        tolerancia_angular=2.0, tolerancia_continuidade=10.0,
-                       tolerancia_temporal=5.0):
+                       tolerancia_temporal=5.0, excluir=None):
     """Pipeline completo de análise de extremos, equivalente ao que a
     janela Tkinter fazia botão-a-botão, mas tudo numa só chamada,
     devolvendo um dict pronto a serializar em JSON. 'modo' é 'todos' ou
@@ -538,6 +538,33 @@ def analisar_extremos(ts_s, valores, modo="filtrado", prominencia=2.0, distancia
         minimos = filtrar_indices_fora_de_estagnacoes(minimos, estagnacoes)
 
     extremos = montar_lista_extremos(ts_s, valores, maximos, minimos, estagnacoes)
+
+    # Filtro de exclusão manual: remove os extremos que o utilizador marcou
+    # como ignorados na app. Aplicado ANTES do agrupamento angular e temporal,
+    # para que toda a redistribuição de tempos seja recalculada sem eles.
+    # Cada entrada de 'excluir' é um dict com:
+    #   - extremo normal:  {"tipo": "Máximo"|"Mínimo", "tempo": float}
+    #   - estagnação:      {"tipo": "Estagnação", "estagnacao_id": int}
+    # Para estagnações excluímos sempre o par completo (início + fim).
+    if excluir:
+        ids_estagnacao_excluir = {
+            int(e["estagnacao_id"]) for e in excluir
+            if e.get("tipo") == "Estagnação" and "estagnacao_id" in e
+        }
+        tempos_excluir = {
+            (e["tipo"], round(float(e["tempo"]), 6)) for e in excluir
+            if e.get("tipo") in ("Máximo", "Mínimo") and "tempo" in e
+        }
+
+        def _nao_excluido(item):
+            if item.get("estagnacao") and item.get("estagnacao_id") in ids_estagnacao_excluir:
+                return False
+            chave = (item["tipo"], round(float(item["tempo"]), 6))
+            if chave in tempos_excluir:
+                return False
+            return True
+
+        extremos = [e for e in extremos if _nao_excluido(e)]
 
     resumo_micro = {"patamares": 0, "removidos": 0}
     if limpar_micro:
