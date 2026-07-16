@@ -294,3 +294,72 @@ def analisar_gravacao(id_gravacao: str, parametros: Optional[ParametrosAnalise] 
         "tratamento": resultado_tratamento,
         "analise_extremos": resultado_analise,
     }
+
+
+class ParametrosTrajetoria(BaseModel):
+    """Parâmetros da trajetória suave (velocidade tipo logística), mesmos
+    valores por omissão do 'Trajetória com velocidade exponencial para o
+    servo' na janela Tkinter. Aceita também os parâmetros de análise
+    (herdados), para poder recalcular tudo numa só chamada."""
+    analise: ParametrosAnalise = ParametrosAnalise()
+    fator_velocidade: float = 1.0
+    passo_ms: float = 20.0
+    intensidade: float = 8.0
+
+
+@app.post("/gravacoes/{id_gravacao}/trajetoria")
+def gerar_trajetoria(id_gravacao: str, parametros: Optional[ParametrosTrajetoria] = None):
+    """Corre a análise de extremos e gera a partir dela a trajetória suave
+    (perfil de velocidade tipo logística), devolvendo pontos prontos a
+    reproduzir no servo: (tempo_ms, angulo_servo 0-180). Equivalente ao
+    botão 'Exportar trajetória suavizada' / 'Reproduzir no servo ao vivo'
+    da janela de Análise de Extremos na app Tkinter."""
+    gravacao = gravacoes.get(id_gravacao)
+    if gravacao is None:
+        raise HTTPException(status_code=404, detail="Gravação não encontrada.")
+    p = parametros or ParametrosTrajetoria()
+
+    ts_ms = [ponto[0] for ponto in gravacao["pontos"]]
+    angulos_eixo = [ponto[1] - 90.0 for ponto in gravacao["pontos"]]
+    resultado_tratamento = tratamento.processar_gravacao(ts_ms, angulos_eixo, janela=p.analise.janela_suavizacao)
+
+    try:
+        resultado_analise = analise.analisar_extremos(
+            resultado_tratamento["ts_s"], resultado_tratamento["angulos_suaves"],
+            modo=p.analise.modo, prominencia=p.analise.prominencia, distancia_min_s=p.analise.distancia_min_s,
+            limpar_micro=p.analise.limpar_micro, micro_diferenca_angular=p.analise.micro_diferenca_angular,
+            micro_intervalo_s=p.analise.micro_intervalo_s, micro_velocidade_max=p.analise.micro_velocidade_max,
+            detetar_estagnacao=p.analise.detetar_estagnacao, estagnacao_tolerancia=p.analise.estagnacao_tolerancia,
+            estagnacao_duracao_min=p.analise.estagnacao_duracao_min,
+            estagnacao_diferenca_minima=p.analise.estagnacao_diferenca_minima,
+            estagnacao_intervalo_fusao=p.analise.estagnacao_intervalo_fusao,
+            tolerancia_angular=p.analise.tolerancia_angular, tolerancia_continuidade=p.analise.tolerancia_continuidade,
+            tolerancia_temporal=p.analise.tolerancia_temporal,
+        )
+        trajetoria = analise.gerar_trajetoria_exponencial(
+            resultado_analise["extremos"],
+            fator_velocidade=p.fator_velocidade,
+            passo_s=p.passo_ms / 1000.0,
+            intensidade=p.intensidade,
+        )
+    except (ValueError, RuntimeError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    if len(trajetoria) < 2:
+        raise HTTPException(status_code=400, detail="São precisos pelo menos dois extremos para gerar a trajetória.")
+
+    pontos_servo = []
+    for tempo_s, angulo_eixo in trajetoria:
+        tempo_ms = int(round(tempo_s * 1000.0))
+        angulo_servo = int(round(min(180.0, max(0.0, angulo_eixo + 90.0))))
+        if pontos_servo and tempo_ms == pontos_servo[-1][0]:
+            pontos_servo[-1] = (tempo_ms, angulo_servo)
+        else:
+            pontos_servo.append((tempo_ms, angulo_servo))
+
+    return {
+        "id": id_gravacao,
+        "n_pontos": len(pontos_servo),
+        "pontos": pontos_servo,
+        "analise_extremos": resultado_analise,
+    }
