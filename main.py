@@ -300,11 +300,19 @@ class ParametrosTrajetoria(BaseModel):
     """Parâmetros da trajetória suave (velocidade tipo logística), mesmos
     valores por omissão do 'Trajetória com velocidade exponencial para o
     servo' na janela Tkinter. Aceita também os parâmetros de análise
-    (herdados), para poder recalcular tudo numa só chamada."""
+    (herdados), para poder recalcular tudo numa só chamada.
+
+    'excluir' é uma lista de extremos a remover antes do agrupamento temporal
+    e da geração da trajetória. Cada item é um dict com:
+      - extremo normal:  {"tipo": "Máximo"|"Mínimo", "tempo": float}
+      - estagnação:      {"tipo": "Estagnação", "estagnacao_id": int}
+    O par completo de uma estagnação é sempre excluído em conjunto.
+    """
     analise: ParametrosAnalise = ParametrosAnalise()
     fator_velocidade: float = 1.0
     passo_ms: float = 20.0
     intensidade: float = 8.0
+    excluir: list[dict] = []
 
 
 @app.post("/gravacoes/{id_gravacao}/trajetoria")
@@ -335,6 +343,7 @@ def gerar_trajetoria(id_gravacao: str, parametros: Optional[ParametrosTrajetoria
             estagnacao_intervalo_fusao=p.analise.estagnacao_intervalo_fusao,
             tolerancia_angular=p.analise.tolerancia_angular, tolerancia_continuidade=p.analise.tolerancia_continuidade,
             tolerancia_temporal=p.analise.tolerancia_temporal,
+            excluir=p.excluir or [],
         )
         trajetoria = analise.gerar_trajetoria_exponencial(
             resultado_analise["extremos"],
